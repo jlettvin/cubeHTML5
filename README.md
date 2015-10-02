@@ -1,8 +1,9 @@
 # cubeHTML5
 Experiments with 3D controls and displays
 
-Simply browse to a copy of cube.html.
+Simply follow this link:
     https://cdn.rawgit.com/jlettvin/cubeHTML5/master/cube.html
+
 It displays a 3D cube.
 The cube may be spun on 3 axes.
 The cube may be displaced on 3 axes.
