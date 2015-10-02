@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html>
+  <head>
+
+    <title>HTML5 Rotate/Translate Hollow Cube</title>
+
+    <small hidden id="__doc__">
+Author: Jonathan D. Lettvin
+Date: 20151001
+Email: jlettvin@gmail.com
+Ideas: Partly inspired by research.  Mostly my own work.
+    </small>
+
+    <style>
+table {
+  border-spacing: 0.5rem;
+  border-collapse: collapse;
+}
+tfoot {
+  text-align: center;
+}
+    </style>
+
+    <script type="text/javascript">
+//vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+window.onload = main;
+ 
+//#############################################################################
+// http://www.xul.fr/javascript/variables.php for const and other syntax
+const convert = Math.PI / 180;  // Conversion constant degrees to radians
+const hi = 255, lo = 0;         // Max/Min RGB values
+const edge = 300;               // Canvas width and height
+const half = edge / 2;          // Halfway across/down canvas
+
+const permin = 10, permax = 250, perini = 50;
+const angmax = 10, angini = 0, aini = 45, bini = 30, cini = 0;
+const dspmax = 1.0, dspini = 0.0;
+const refini = true;
+
+const keySP = 32;
+const key0 = 48;
+const keyA = 65;
+const keyB = 66;
+const keyC = 67;
+const keyI = 73;
+const keyJ = 74;
+const keyK = 75;
+const keyT = 84;
+const keyX = 88;
+const keyY = 89;
+const keyZ = 90;
+
+//#############################################################################
+var drag = false;               // Whether the mouse button is pressed
+var persist = perini;           // Milliseconds per frame
+var refresh = refini;           // Whether to use angular velocities
+
+// Face vertex indices
+var faces  = [
+  [0, 1, 2, 3], [1, 5, 6, 2], [5, 4, 7, 6],
+  [4, 0, 3, 7], [0, 4, 5, 1], [3, 2, 6, 7]
+];
+ 
+// Face colors
+var colors = [
+  [hi, lo, lo], [lo, hi, lo], [lo, lo, hi],
+  [hi, hi, lo], [lo, hi, hi], [hi, lo, hi]
+];
+ 
+// Initial cube angles, coordinates, and control data
+var da = aini, db = bini, dc = cini;   // Angles in degrees
+var va = 0, vb = 0, vc = 0;   // Angular velocities
+var dx = 0, dy = 0, dz = 0;   // Unused
+
+// Points of the cube
+var cubeVertices = [
+   new Point3D(-1, +1, -1), new Point3D(+1, +1, -1),
+   new Point3D(+1, -1, -1), new Point3D(-1, -1, -1),
+   new Point3D(-1, +1, +1), new Point3D(+1, +1, +1),
+   new Point3D(+1, -1, +1), new Point3D(-1, -1, +1)
+];
+ 
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+/* Service functions */
+//_____________________________________________________________________________
+function withinLimits(lower, upper, value, increment) {
+  var proposed = value + increment;
+  return (proposed >= lower && proposed <= upper) ? proposed : value;
+}
+
+//_____________________________________________________________________________
+/* sprintf equivalence (required slight correction from original) */
+/* http://stackoverflow.com/questions/610406/
+   javascript-equivalent-to-printf-string-format
+ */
+String.format = function(str, arr) {
+  var i = -1;
+  function callback(exp, p0, p1, p2, p3, p4) {
+    if (exp=='%%') return '%';
+    if (arr[++i]===undefined) return undefined;
+    var exp  = p2 ? parseInt(p2.substr(1)) : undefined;
+    var base = p3 ? parseInt(p3.substr(1)) : undefined;
+    var val;
+    switch (p4) {
+      case 's': val = arr[i]; break;
+      case 'c': val = arr[i][0]; break;
+      case 'f': val = parseFloat(arr[i]).toFixed(exp); break;
+      case 'p': val = parseFloat(arr[i]).toPrecision(exp); break;
+      case 'e': val = parseFloat(arr[i]).toExponential(exp); break;
+      case 'x': val = parseInt(arr[i]).toString(base?base:16); break;
+      case 'd':
+        val = parseFloat(
+          parseInt(arr[i], base ? base : 10).toPrecision(exp)).toFixed(0);
+        break;
+    }
+    val = typeof(val)=='object' ?
+      JSON.stringify(val) :
+      val.toString(base);
+    var sz = parseInt(p1); /* padding size */
+    var ch = p1 && p1[0]=='0' ? '0' : ' '; /* isnull? */
+    while (val.length<sz) val = p0 !== undefined ?
+      val+ch :
+      ch+val; /* isminus? */
+   return val;
+  }
+  var regex = /%(-)?(0?[0-9]+)?([.][0-9]+)?([#][0-9]+)?([scfpexd])/g;
+  return str.replace(regex, callback);
+}
+
+//_____________________________________________________________________________
+String.prototype.$ = function() {
+  return String.format(this, Array.prototype.slice.call(arguments));
+}
+
+//_____________________________________________________________________________
+function arrayToRGB(a) {
+  /* Constructs a CSS RGB value from an array of 3 elements. */
+  a = (a.length == 3) ? a : [0, 0, 0];
+  return "rgb(%d,%d,%d)".$(a[0], a[1], a[2]);
+}
+ 
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+/* Geometric operation functions */
+
+//_____________________________________________________________________________
+function Rotate(axis1, axis2, angle) {
+  /* Generic rotation of plane around an axis */
+  var radians = angle * convert;
+  var cosa = Math.cos(radians), sina = Math.sin(radians);
+  this.axis1 = axis1 * cosa - axis2 * sina;
+  this.axis2 = axis1 * sina + axis2 * cosa;
+}
+
+//_____________________________________________________________________________
+function Point3D(x,y,z) {
+  // Store coordinates
+  this.x = x;
+  this.y = y;
+  this.z = z;
+
+  // Define functions for operations
+  //...........................................................................
+  this.rotateAroundX = function(angle) {
+    var rotated = new Rotate(this.y, this.z, angle);
+    return new Point3D(this.x, rotated.axis1, rotated.axis2);
+  };
+ 
+  //...........................................................................
+  this.rotateAroundY = function(angle) {
+    var rotated = new Rotate(this.z, this.x, angle);
+    return new Point3D(rotated.axis2, this.y, rotated.axis1);
+  };
+ 
+  //...........................................................................
+  this.rotateAroundZ = function(angle) {
+    var rotated = new Rotate(this.x, this.y, angle);
+    return new Point3D(rotated.axis1, rotated.axis2, this.z);
+  };
+
+  //...........................................................................
+  this.rotate = function() {
+    /* Perform all three rotations */
+    return this.rotateAroundX(da).rotateAroundY(db).rotateAroundZ(dc);
+  };
+
+  //...........................................................................
+  this.translate = function() {
+    /* Displace according to the mouse (x,y) drag coordinates */
+    return new Point3D(this.x + dx, this.y + dy, this.z + dz);
+  };
+ 
+  //...........................................................................
+  this.project = function(viewWidth, viewHeight, fov, viewDistance) {
+    var factor, x, y;
+    factor = fov / (viewDistance + this.z);
+    x = this.x * factor + viewWidth / 2;
+    y = this.y * factor + viewHeight / 2;
+    return new Point3D(x, y, this.z);
+  };
+}
+ 
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+/* Loop service functions */
+
+//_______________________________________________________________________
+/* Direct loop functions */
+function updateText() {
+  document.getElementById(  "alpha").innerHTML = va;
+  document.getElementById(   "beta").innerHTML = vb;
+  document.getElementById(  "gamma").innerHTML = vc;
+  document.getElementById(     "da").innerHTML = da;
+  document.getElementById(     "db").innerHTML = db;
+  document.getElementById(     "dc").innerHTML = dc;
+  document.getElementById(     "dx").innerHTML = "%5.2f".$(dx);
+  document.getElementById(     "dy").innerHTML = "%5.2f".$(dy);
+  document.getElementById(     "dz").innerHTML = "%5.2f".$(dz);
+  document.getElementById("persist").innerHTML = persist;
+}
+
+//_____________________________________________________________________________
+function updateAngles() {
+  // Update the cube viewing angle
+  if(refresh) {
+    da = (da + va) % 360;
+    db = (db + vb) % 360;
+    dc = (dc + vc) % 360;
+  }
+}
+
+//_____________________________________________________________________________
+function updateCube() {
+  /* Infinite loop code */
+  var t = new Array();
+ 
+  // Set background color
+  ctx.fillStyle = "rgb(0,0,0)";
+  ctx.fillRect(0,0,edge,edge);
+ 
+  // Move cube vertices to their new coordinates
+  for(var i = 0; i < cubeVertices.length; i++) {
+    var v = cubeVertices[i];
+    var r = v.rotate().translate();
+    var p = r.project(edge, edge, 200, 4);
+    t.push(p);
+  }
+ 
+  // Depth calculation along z axis
+  var avg_z = new Array();
+  for(var i = 0; i < faces.length; i++) {
+    var f = faces[i];
+    avg_z[i] = {
+      "index": i,
+      "z": (t[f[0]].z + t[f[1]].z + t[f[2]].z + t[f[3]].z) / 4.0
+    };
+  }
+ 
+  avg_z.sort(function(a,b) {
+    return b.z - a.z;
+  });
+ 
+  // Iterate over cube faces
+  for(var i = 0; i < faces.length; i++) {
+
+    // Get cube face parameters
+    var f = faces[avg_z[i].index];
+ 
+    // Generate a cube face
+    ctx.beginPath();
+    ctx.moveTo(t[f[0]].x,t[f[0]].y);
+    ctx.lineTo(t[f[1]].x,t[f[1]].y);
+    ctx.lineTo(t[f[2]].x,t[f[2]].y);
+    ctx.lineTo(t[f[3]].x,t[f[3]].y);
+    ctx.closePath();
+
+    // Fetch the cube face color and generate it
+    ctx.fillStyle = arrayToRGB(colors[avg_z[i].index]);
+    ctx.fill();
+  }
+}
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+/* Event handlers */
+
+//_____________________________________________________________________________
+/* Detect mouse button state */
+function handleMouseOut(e) {
+  document.getElementById("XY").innerHTML = "";
+  return false;
+}
+
+//_____________________________________________________________________________
+function handleMouseUp(e) {
+  drag = false; handleMouseOut();
+  return false;
+}
+
+//_____________________________________________________________________________
+function handleMouseDown(e) {
+  drag =  true;
+  return handleMouseMove(e);
+}
+
+//_____________________________________________________________________________
+function handleMouseMove(e) {
+  /* Detect drag position, scale, and use for cube displacement */
+  if(drag) {
+    var x = e.clientX;
+    var y = e.clientY;
+    dx = 2 * parseFloat(x - half) / half;   // Cube x displacement
+    dy = 2 * parseFloat(y - half) / half;   // Cube y displacement
+  }
+  return false;
+}
+
+//_____________________________________________________________________________
+/* Detect key requests for angular velocity changes */
+function handleKeyUp(e) {
+  return false;
+}
+
+//_____________________________________________________________________________
+function handleKeyDown(e) {
+  var shift = event.shiftKey;  // Is the shift key being held down?
+  var inc  = shift ? +1 : -1;  // Integer increment for displacement/frame rate
+  var fnc  = parseFloat(inc) / half;  // Float increment for angular velocity
+
+  switch(e.keyCode) {
+
+    /* Defaults */
+    case key0:
+      da = aini, db = bini, dc = cini;
+      va = vb = vc = angini;
+      dx = dy = dz = dspini;
+      persist = perini;
+      refresh = refini;
+      break;
+    case keySP: refresh ^= true; break;
+
+    /* Angular velocity */
+    case keyA: va = withinLimits(-angmax, +angmax, va, inc); break;
+    case keyB: vb = withinLimits(-angmax, +angmax, vb, inc); break;
+    case keyC: vc = withinLimits(-angmax, +angmax, vc, inc); break;
+
+    /* Angular increment */
+    case keyI: da = (da + 360 + inc) % 360; break;
+    case keyJ: db = (db + 360 + inc) % 360; break;
+    case keyK: dc = (dc + 360 + inc) % 360; break;
+
+    /* Displacement */
+    case keyX: dx = withinLimits(-dspmax, +dspmax, dx, fnc); break;
+    case keyY: dy = withinLimits(-dspmax, +dspmax, dy, fnc); break;
+    case keyZ: dz = withinLimits(-dspmax, +dspmax, dz, fnc); break;
+
+    /* Frame rate */
+    case keyT: persist = withinLimits(permin, permax, persist, inc); break;
+
+    /* Ignore everything else */
+    default: break;
+  }
+  return false;
+}
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+/* loop and main */
+
+//_____________________________________________________________________________
+function loop() {
+  updateCube();
+  updateAngles();
+  updateText();
+  setTimeout(loop, persist);
+}
+
+//_____________________________________________________________________________
+function main() {
+  /* Begin execution */
+  canvas = document.getElementById("JDLcanvas");
+  if(canvas && canvas.getContext) {
+    ctx = canvas.getContext("2d");
+    setTimeout(loop, persist);
+  }
+  // http://www.dbp-consulting.com/tutorials/canvas/CanvasKeyEvents.html
+  canvas.setAttribute('tabindex', '0');  // Necessary to activate key events
+  canvas.focus();
+}
+ 
+//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    </script>
+
+  </head>
+
+  <!-- http://www.homeandlearn.co.uk/JS/html5_canvas_getting_started.html -->
+  <body>
+
+    <table border="1">
+      <thead align="center">
+        <td colspan="2" id="copyright" bgcolor="CCCCCC">
+          <big><big>HTML5 CUBE</big></big>
+        </td>
+      </thead>
+      <tr>
+        <td>
+          <canvas
+           id="JDLcanvas"
+           width="300"
+           height="300"
+           onmousemove="handleMouseMove(event)"
+           onmouseout ="handleMouseOut (event)"
+           onmousedown="handleMouseDown(event)"
+           onmouseup  ="handleMouseUp  (event)"
+           onkeydown  ="handleKeyDown  (event)"
+           onkeyup    ="handleKeyUp    (event)"
+          >
+           Canvas element unsupported by browser.
+          </canvas>
+        </td><td valign="top">
+          <div id="instructions">
+            <table border="1">
+              <tr>
+                <td id="title" align="center" colspan="6" bgcolor="CCCCCC">
+                  <big>KEY/MOUSE BINDINGS</big>
+                </td>
+              </tr><tr>
+                <td align="center" colspan="6" bgcolor="FFCCCC">
+                  <b>Angular Velocity</b>
+                </td>
+              </tr><tr>
+                <td id="da" align="right" width="30px"></td>
+                <td id="alpha" align="right" width="25px"></td>
+                <td width="10px"</td>
+                <td>i/I</td><td>a/A</td>
+                <td>increase/decrease &alpha; x-normal angle or velocity</td>
+              </tr><tr>
+                <td id="db" align="right"></td>
+                <td id="beta" align="right"></td>
+                <td width="10px"</td>
+                <td>j/J</td><td>b/B</td>
+                <td>increase/decrease &beta; y-normal angle or velocity</td>
+              </tr><tr>
+                <td id="dc" align="right"></td>
+                <td id="gamma" align="right"></td>
+                <td width="10px"</td>
+                <td>k/K</td><td>c/C</td>
+                <td>increase/decrease &gamma; z-normal angle or velocity</td>
+              </tr><tr>
+                <td align="center" colspan="6" bgcolor="FFFFCC">
+                  <b>Linear Displacement</b>
+                </td>
+              </tr><tr>
+                <td id="dx" colspan="2" align="right"></td>
+                <td width="10px"</td>
+                <td>x</td><td>X</td>
+                <td>increase/decrease x-displacement</td>
+              </tr><tr>
+                <td id="dy" colspan="2" align="right"></td>
+                <td width="10px"</td>
+                <td>y</td><td>Y</td>
+                <td>increase/decrease y-displacement</td>
+              </tr><tr>
+                <td id="dz" colspan="2" align="right"></td>
+                <td width="10px"</td>
+                <td>z</td><td>Z</td>
+                <td>increase/decrease z-displacement</td>
+              </tr><tr>
+                <td align="center" colspan="6" bgcolor="CCFFCC">
+                  <b>Frame Rate</b>
+                </td>
+              </tr><tr>
+                <td id="persist" colspan="2" align="right"></td>
+                <td width="10px"</td>
+                <td>t</td><td>T</td>
+                <td>increase/decrease frame persistence (ms)</td>
+              </tr><tr>
+                <td align="center" colspan="6" bgcolor="CCFFFF">
+                  <b>Other Capabilities</b>
+                </td>
+              </tr><tr>
+                <td colspan="6">
+                  <i>Mouse drag: alternate (x,y) displacement.</i>
+                </td>
+              </tr><tr>
+                <td colspan="6">
+                  <i>&lt;SPACE&gt;/0: pause angular rotation/set defaults</i>
+                </td>
+              </tr>
+            </table>
+          </div>
+        </td>
+      </tr>
+      <tfoot>
+        <td colspan="2" id="copyright" bgcolor="CCCCCC">
+          <small>
+            Copyright(c)2015 Jonathan D. Lettvin, All Rights Reserved
+          </small>
+        </td>
+      </tfoot>
+    </table>
+  </body>
+</html>
